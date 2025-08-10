@@ -1,24 +1,30 @@
-# ESP32 DuckDNS Client 🦆
+# ESP32 DuckDNS Client (Enhanced) 🦆
 
-This project is an open-source, standalone Dynamic DNS (DDNS) client for **DuckDNS.org** that runs on an **ESP32** microcontroller.
+This project is an open-source, standalone Dynamic DNS (DDNS) client for **DuckDNS.org** that runs on an **ESP32** microcontroller. This enhanced version is a complete overhaul, offering a robust, feature-rich, and secure solution to keep your DuckDNS domain pointed to your home's dynamic IP address.
 
-It was adapted from the original ESP8266 DuckDNS client created by Davide Gironi. This version provides a simple, "set-it-and-forget-it" solution to keep your DuckDNS domain pointed to your home's dynamic IP address.
+It was adapted from the original ESP8266 DuckDNS client created by Davide Gironi @davidegironi (https://davidegironi.blogspot.com/2017/02/duck-dns-esp8266-mini-wifi-client.html). 
 
-![](images/webclient.png)
+**Version with NTP and persisting logging**
+![Web Interface Status Page](images/webclient_1_NTP.png)
+
 
 ---
 
 ## Features
 
 * **ESP32 Compatible**: Runs on the powerful and versatile ESP32 platform.
-* **WiFi Manager**: No need to hardcode WiFi credentials! On first boot, it creates an Access Point for you to easily connect it to your local network.
-* **Web Interface**: After setup, the device hosts a simple web page to:
-    * View the current update status.
-    * See when the last successful update occurred.
-    * Configure your DuckDNS domain, token, and update interval.
-* **Persistent Settings**: All settings (WiFi credentials, domain, token) are saved to the ESP32's internal flash (EEPROM) and survive reboots and power loss.
-* **Status LED**: The onboard LED provides a visual status of the WiFi connection and DDNS update process.
-* **Simple API**: A new API endpoint provides the device's status in a JSON format, allowing for integration with other systems like Home Assistant.
+* **WiFi Manager**: No need to hardcode WiFi credentials. On first boot, it creates an access point for you to easily connect it to your local network.
+* **Modern Web Interface**: A clean, mobile-responsive web interface to:
+    * View detailed DDNS and NTP (Network Time Protocol) status.
+    * See device uptime, IP address, and WiFi signal strength.
+    * Force manual DDNS or NTP syncs.
+* **Secure Configuration**: The settings page is password-protected (`user` / `pass`) to prevent unauthorized changes.
+* **Advanced Time Management**:
+    * Robust NTP synchronization with primary and fallback servers.
+    * Accurate, timestamped logging. Logs created before time sync are automatically updated with an estimated timestamp.
+* **Persistent Logging**: Option to save system and update logs to the ESP32's internal flash, preserving them across reboots.
+* **Detailed Logging**: View both current session and persistent logs directly from the web interface, with clear success/fail indicators and event types (DDNS, NTP, System).
+* **JSON API**: A comprehensive API endpoint provides the device's status in a JSON format, perfect for integration with systems like Home Assistant.
 
 ---
 
@@ -37,16 +43,10 @@ It was adapted from the original ESP8266 DuckDNS client created by Davide Gironi
 
 ### 3. Flashing the Code
 
-1.  Open the `${firemwarefile}.ino` sketch in the Arduino IDE.
+1.  Open the `esp32duckdns_withapi$version.ino` file in the Arduino IDE or a compatible editor like VS Code with the PlatformIO extension.
 2.  Select your ESP32 board from the `Tools` > `Board` menu.
 3.  Select the correct COM port under the `Tools` > `Port` menu.
 4.  Click the "Upload" button.
-
-### 4. Choice of firmware
-
-1. `esp32duckdns.ino` is the vanila version without extra functionalities.  
-2. `esp32duckdns_withapi.ino` provides an api to get status of the service. Usefull to integrate in home assistant as rest api sensor.  
-3. `esp32duckdns_withap_vclaude.ino` Refactored code from claude 3.5. New gui, more information in API, password protected configuration, and better code. 
 
 ---
 
@@ -54,80 +54,85 @@ It was adapted from the original ESP8266 DuckDNS client created by Davide Gironi
 
 ### First-Time WiFi Setup
 
-The first time you power on the ESP32, it won't know your WiFi credentials. It will automatically enter configuration mode.
+The first time you power on the ESP32, it will automatically enter configuration mode.
 
 1.  Using your phone or computer, scan for new Wi-Fi networks.
-2.  Connect to the network named **`ESP32-DuckDNS-AP`**.
+2.  Connect to the network named **`ESP32-DuckDNS-Enhanced`**.
 3.  A captive portal page should automatically open in your browser. If not, open a browser and navigate to `192.168.4.1`.
-4.  Click on "Configure WiFi", select your home network (SSID), and enter its password.
-5.  Click "Save". The ESP32 will save the credentials, reboot, and automatically connect to your home network. The `ESP32-DuckDNS-AP` network will now be gone.
+4.  Click on **"Configure WiFi"**, select your home network (SSID), and enter its password.
+5.  Click **"Save"**. The ESP32 will save the credentials, reboot, and automatically connect to your home network.
 
-### DuckDNS Configuration
+### Device Configuration
+![Settings Page](images/webclient_3.png)
 
-Once the device is connected to your network, you need to tell it your DuckDNS details.
+![Settings Page](images/webclient_4.png)
 
-1.  Find the device's IP address. You can do this by:
-    * Checking the "Connected Devices" list on your router's admin page. The hostname will be `espduckdnsXXX`.
+
+Once the device is connected to your network, you need to configure it.
+
+1.  Find the device's IP address by:
+    * Checking the "Connected Devices" list on your router's admin page. The hostname will be **`testduckXXX`** (where `XXX` is the Device ID).
     * Monitoring the Serial Output in the Arduino IDE when the device boots up.
-2.  Open a web browser on the same network and enter the ESP32's IP address.
+2.  Open a web browser and enter the ESP32's IP address.
 3.  You'll see the status page. Click the **"Settings"** link.
-4.  Enter your **DuckDNS Domain** and **Token**.
-5.  Set your desired **Update Interval** in minutes.
-6.  Click **"Save"**. The device will save your settings and reboot.
+4.  You will be prompted for a username and password. Enter the defaults:
+    * **Username**: `user` (these are configurable within the first 20 lines of code)
+    * **Password**: `pass`
+5.  On the settings page, you can configure:
+    * **DuckDNS Domain** and **Token**.
+    * **Update Interval** in minutes.
+    * Primary, Secondary, and Tertiary **NTP Servers**.
+    * Enable/Disable **Persistent Logging**.
+    * Optionally reset WiFi settings on the next boot.
+6.  Click **"Save Settings"**. The device will save your settings and reboot.
 
-That's it! The ESP32 will now automatically update your DuckDNS domain at the interval you specified.
+![Web Interface Status Page](images/webclient_2_NTP.png)
+
+![Web Interface Status Page](images/webclient_3_NTP.png)
+
+
+That's it! The ESP32 is now fully configured.
+
+
 
 ---
 
 ## Home Assistant Integration
 
-You can integrate the ESP32 DuckDNS client with Home Assistant to create a sensor that displays its status. The firmware provides a new API endpoint at `http://[device_ip]/api/status` that returns a JSON object with the status information.
+You can integrate the client with Home Assistant using the RESTful sensor platform. The API endpoint at `http://[device_ip]/api/status` provides a detailed JSON response.
 
-### 1. The API Response
+### API Response
 
-The API endpoint will return a JSON object similar to this:
+The API returns a rich JSON object, perfect for creating multiple sensors in Home Assistant.
 
 ```json
 {
-  "last_update_status": "Success",
-  "last_update_ago": 120,
-  "next_update_in": 300
+  "status": "success",
+  "last_update": 1754857330,
+  "next_update": 458,
+  "ip": "192.168.0.7",
+  "rssi": -54,
+  "uptime": 142,
+  "time_synced": true,
+  "ntp_attempts": 1,
+  "ntp_last_sync": 23000,
+  "persistent_logging": true,
+  "log": [
+    {
+      "time": 1754857211,
+      "local_time": 21345,
+      "status": "success",
+      "type": "SYS",
+      "timestamp_valid": true,
+      "error": "Web server started on port 80"
+    },
+    {
+      "time": 1754857330,
+      "local_time": 140123,
+      "status": "success",
+      "type": "DDNS",
+      "timestamp_valid": true,
+      "error": "DDNS update successful"
+    }
+  ]
 }
-```
-
-## What's New in v1.4 
-
-### New Features and Fixes
-
-The updated ESP32 DuckDNS client, version 1.4, includes several key enhancements and fixes aimed at improving security and stability:
-
-* **Security and Stability**: The code has been enhanced to address buffer overflow vulnerabilities and improve memory management.
-* **Error Handling**: The client now features better error handling, including a retry mechanism for failed updates. When an update fails, the device will retry sooner.
-* **Authentication**: An authentication layer has been added to the web interface, requiring a username and password (`admin` and `your_secure_password`) to access the settings page.
-* **EEPROM Optimization**: The EEPROM usage has been optimized for storing persistent settings.
-* **API Endpoint**: The API endpoint `http://[device_ip]/api/status` now provides a more detailed JSON response. It includes the `last_update_status`, `last_update_ago`, and `next_update_in`.
-* **Logging**: A new update log feature stores the history of the last five DDNS updates, including their status and any error messages. This log is viewable on the web interface.
-* **Firmware Information**: The web interface displays the firmware version and build date/time.
-
-
-#### New API
-![New API](images/webclient_1.png)
-
-#### GUI
-![New API](images/webclient_2.png)
-
-#### Password for settings
-![New API](images/webclient_3.png)
-
-#### Settings
-![New API](images/webclient_4.png)
-
-
-
-### Setup and Use Updates
-
-The instructions for using the client have been updated to reflect these changes:
-
-* **DuckDNS Configuration**: To access the **"Settings"** page, you must now authenticate with the username `admin` and the password `your_secure_password`.
-* **Validation**: The settings form now includes client-side validation to ensure the entered values for Device ID, Domain, Token, and Update Interval are within the correct ranges.
-* **Reset WiFi Settings**: A new checkbox has been added to the settings page, allowing you to reset your WiFi credentials and re-enter configuration mode.
