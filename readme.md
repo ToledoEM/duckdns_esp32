@@ -25,6 +25,7 @@ It was adapted from the original ESP8266 DuckDNS client created by Davide Gironi
 * **Persistent Logging**: Option to save system and update logs to the ESP32's internal flash, preserving them across reboots.
 * **Detailed Logging**: View both current session and persistent logs directly from the web interface, with clear success/fail indicators and event types (DDNS, NTP, System).
 * **JSON API**: A comprehensive API endpoint provides the device's status in a JSON format, perfect for integration with systems like Home Assistant.
+* **Without memory leaks :-)**: Refactored persistent storage code to use the ESP32 Preferences library.
 
 ---
 
