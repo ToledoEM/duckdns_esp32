@@ -4,7 +4,7 @@
 #include <ESPmDNS.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
-#include <Preferences.h> 
+#include <Preferences.h> // MODIFIED: Replaced EEPROM with Preferences
 #include <WiFiManager.h>
 #include <Ticker.h>
 #include <time.h>
@@ -16,21 +16,22 @@ const char* CONFIG_NAMESPACE = "ddns_config";
 const char* LOG_NAMESPACE = "ddns_logs";
 
 // Constants
-#define HOSTNAME_PREFIX "testduck"
+#define HOSTNAME_PREFIX "myduckdns"
 #define MAX_HOSTNAME_LENGTH 14
 #define HTTP_RETRY_DELAY 500
 #define REBOOT_DELAY 1000
-#define ADMIN_USERNAME "user"
-#define ADMIN_PASSWORD "pass"
+#define ADMIN_USERNAME "admin"
+#define ADMIN_PASSWORD "password"
 
 // Enhanced NTP Constants with fallback servers
-#define PRIMARY_NTP_SERVER "time.local". // my local GPS NTP server
+#define PRIMARY_NTP_SERVER "time.local"
 #define SECONDARY_NTP_SERVER "2.uk.pool.ntp.org"
 #define TERTIARY_NTP_SERVER "3.uk.pool.ntp.org"
-#define NTP_TIMEZONE "GMT0BST,M3.5.0/1,M10.5.0/1" // my time zone
+#define NTP_TIMEZONE "GMT0BST,M3.5.0/1,M10.5.0/1"
 #define NTP_SYNC_TIMEOUT 60000    // 60 seconds
 #define NTP_RETRY_INTERVAL 3600000 // 1 hour
 #define NTP_HEALTH_CHECK_INTERVAL 1800000 // 30 minutes
+#define REBOOT_CHECK_INTERVAL 60000  // Check reboot time every minute
 
 // Debug modes
 #define DEBUGMODE_STATUSLED 1
@@ -62,6 +63,9 @@ Ticker ddnsStatusLedTicker;
 struct ddnsConfig {
   char initialized; // Still used as a marker, but within Preferences
   int deviceid;
+  bool enableDailyReboot;
+  int rebootHour;
+  int rebootMinute;
   char domain[65];
   char token[37];
   int updateinterval;
@@ -221,8 +225,8 @@ void initNtpStatus() {
 bool attemptNtpSync() {
   ntpStatus.lastSyncAttempt = millis();
   ntpStatus.syncAttempts++;
-  const char* server = (strlen(ddnsConfiguration.ntpServer) > 0) ? 
-                      ddnsConfiguration.ntpServer : 
+  const char* server = (strlen(ddnsConfiguration.ntpServer) > 0) ?
+                      ddnsConfiguration.ntpServer :
                       ntpServers[ntpStatus.currentServerIndex];
   #if defined SERIAL_ENABLED
   Serial.println("Attempting NTP sync with server: " + String(server));
@@ -232,7 +236,7 @@ bool attemptNtpSync() {
   configTime(0, 0, server);
   setenv("TZ", NTP_TIMEZONE, 1);
   tzset();
-  
+
   // Wait for sync with timeout
   unsigned long syncStart = millis();
   while (millis() - syncStart < NTP_SYNC_TIMEOUT) {
@@ -240,32 +244,32 @@ bool attemptNtpSync() {
       ntpStatus.synchronized = true;
       ntpStatus.lastSyncTime = millis();
       time_t now = time(nullptr);
-      
+
       #if defined SERIAL_ENABLED
       Serial.println("NTP sync successful! Time: " + String((unsigned long)now));
       #endif
-      
+
       enhancedLogAdd(1, 1, "NTP sync successful with " + String(server));
       updatePendingTimestamps();
       return true;
     }
     delay(1000);
   }
-  
+
   // Try next server on failure
   ntpStatus.currentServerIndex = (ntpStatus.currentServerIndex + 1) % 3;
   enhancedLogAdd(0, 1, "NTP sync timeout with " + String(server));
-  
+
   #if defined SERIAL_ENABLED
   Serial.println("NTP sync failed with " + String(server));
   #endif
-  
+
   return false;
 }
 
 void checkNtpHealth() {
   if (!ntpStatus.healthCheckEnabled) return;
-  
+
   bool needsSync = false;
   // Check if we've never synced
   if (!ntpStatus.synchronized) {
@@ -280,7 +284,7 @@ void checkNtpHealth() {
     needsSync = true;
     ntpStatus.synchronized = false;
   }
-  
+
   if (needsSync && (millis() - ntpStatus.lastSyncAttempt > 60000)) { // Wait 1 min between attempts
     enhancedLogAdd(0, 1, "NTP health check triggered resync");
     attemptNtpSync();
@@ -296,7 +300,7 @@ void ddnsPreferencesInit() {
     #if defined SERIAL_ENABLED
     Serial.println("Initializing persistent storage with default values");
     #endif
-    
+
     // Write default values
     preferences.putUChar("initialized", 0x10);
     preferences.putInt("deviceid", 1);
@@ -329,7 +333,7 @@ void ddnsPreferencesInit() {
 
 void ddnsPreferencesWrite() {
   preferences.begin(CONFIG_NAMESPACE, false);
-  
+
   preferences.putInt("deviceid", ddnsConfiguration.deviceid);
   preferences.putString("domain", ddnsConfiguration.domain);
   preferences.putString("token", ddnsConfiguration.token);
@@ -338,7 +342,10 @@ void ddnsPreferencesWrite() {
   preferences.putString("ntpServer2", ddnsConfiguration.secondaryNtpServer);
   preferences.putString("ntpServer3", ddnsConfiguration.tertiaryNtpServer);
   preferences.putBool("persistLog", ddnsConfiguration.persistentLogging);
-  
+  preferences.putBool("dailyReboot", ddnsConfiguration.enableDailyReboot);
+  preferences.putInt("rebootHour", ddnsConfiguration.rebootHour);
+  preferences.putInt("rebootMinute", ddnsConfiguration.rebootMinute);
+
   preferences.end();
 }
 
@@ -347,7 +354,7 @@ void saveToPersistentLog(const EnhancedLogEntry& entry) {
 
   // Get the current log count to determine the next storage key
   int logCount = preferences.getInt("log_count", 0);
-  
+
   // Prepare persistent entry
   PersistentLogEntry persistentEntry;
   persistentEntry.timestamp = entry.timestamp;
@@ -357,30 +364,35 @@ void saveToPersistentLog(const EnhancedLogEntry& entry) {
   persistentEntry.errorMessage[31] = '\0';
   persistentEntry.timestampValid = entry.timestampValid;
   persistentEntry.logType = entry.logType;
-  
+
   // Calculate position (circular buffer) and create the key
   int position = logCount % PERSISTENT_LOG_SIZE;
   String key = "log_" + String(position);
-  
+
   // Write the log entry as a binary blob
   preferences.putBytes(key.c_str(), &persistentEntry, sizeof(PersistentLogEntry));
-  
+
+  // Add new reboot preferences
+  ddnsConfiguration.enableDailyReboot = preferences.getBool("dailyReboot", false);
+  ddnsConfiguration.rebootHour = preferences.getInt("rebootHour", 3);    // Default 3 AM
+  ddnsConfiguration.rebootMinute = preferences.getInt("rebootMinute", 0);
+
   // Update and save the total log count
   logCount++;
   preferences.putInt("log_count", logCount);
-  
+
   preferences.end();
 }
 
 void handleClearPersistentLogs() {
   if (!authenticate()) return;
-  
+
   preferences.begin(LOG_NAMESPACE, false);
   preferences.clear(); // MODIFIED: A much simpler and more robust way to clear all logs
   preferences.end();
-  
+
   enhancedLogAdd(1, 2, "Persistent logs cleared");
-  
+
   server.sendHeader("Location", "/logs");
   server.send(302, "text/plain", "");
 }
@@ -390,7 +402,7 @@ void enhancedLogAdd(int status, uint8_t logType, const String& errorMsg) {
   if (ddnsLogIdx >= 0 && ddnsLogIdx < DDNS_LOG_SIZE) {
     time_t now = time(nullptr);
     unsigned long currentTime = millis();
-    
+
     ddnsUpdateLog[ddnsLogIdx] = {
       .timestamp = now,
       .localTime = currentTime,
@@ -400,16 +412,16 @@ void enhancedLogAdd(int status, uint8_t logType, const String& errorMsg) {
       .logType = logType
     };
     ddnsLogIdx = (ddnsLogIdx + 1) % DDNS_LOG_SIZE;
-    
+
     // Store in persistent memory if enabled
     if (ddnsConfiguration.persistentLogging) {
       saveToPersistentLog(ddnsUpdateLog[(ddnsLogIdx - 1 + DDNS_LOG_SIZE) % DDNS_LOG_SIZE]);
     }
-    
+
     #if defined SERIAL_ENABLED
-    Serial.println("Enhanced log entry added - Type: " + getLogTypeStr(logType) + 
-                   ", Status: " + String(status) + 
-                   ", Valid TS: " + String(isTimeReasonable()) + 
+    Serial.println("Enhanced log entry added - Type: " + getLogTypeStr(logType) +
+                   ", Status: " + String(status) +
+                   ", Valid TS: " + String(isTimeReasonable()) +
                    ", Message: " + errorMsg);
     #endif
   }
@@ -417,11 +429,11 @@ void enhancedLogAdd(int status, uint8_t logType, const String& errorMsg) {
 
 void updatePendingTimestamps() {
   if (!isTimeSynced()) return;
-  
+
   time_t currentRealTime = time(nullptr);
   unsigned long currentLocalTime = millis();
   int updatedCount = 0;
-  
+
   for (int i = 0; i < DDNS_LOG_SIZE; i++) {
     if (!ddnsUpdateLog[i].timestampValid && ddnsUpdateLog[i].localTime > 0) {
       // Calculate approximate real timestamp based on time difference
@@ -431,7 +443,7 @@ void updatePendingTimestamps() {
       updatedCount++;
     }
   }
-  
+
   if (updatedCount > 0) {
     enhancedLogAdd(1, 1, "Updated " + String(updatedCount) + " pending timestamps");
     #if defined SERIAL_ENABLED
@@ -444,16 +456,16 @@ String enhancedLogTableHTML() {
   String out = "";
   char time_str[30];
   bool hasEntries = false;
-  
+
   for (int i = 0; i < DDNS_LOG_SIZE; i++) {
     int idx = (ddnsLogIdx + i) % DDNS_LOG_SIZE;
-    if (ddnsUpdateLog[idx].timestamp == 0 && ddnsUpdateLog[idx].localTime == 0 && 
+    if (ddnsUpdateLog[idx].timestamp == 0 && ddnsUpdateLog[idx].localTime == 0 &&
         ddnsUpdateLog[idx].status == 0 && ddnsUpdateLog[idx].errorMessage == "") continue;
-    
+
     hasEntries = true;
     String timeDisplay;
     String timeClass = "";
-    
+
     if (!ddnsUpdateLog[idx].timestampValid || ddnsUpdateLog[idx].timestamp < 1672531200) {
       if (ddnsUpdateLog[idx].localTime > 0) {
         timeDisplay = "~" + fmtTime((millis() - ddnsUpdateLog[idx].localTime) / 1000) + " ago";
@@ -474,36 +486,36 @@ String enhancedLogTableHTML() {
     }
 
     String status = ddnsUpdateLog[idx].status ?
-      "<span class='status-badge success'>Success</span>" : 
-      "<span class='status-badge fail'>Fail" + 
+      "<span class='status-badge success'>Success</span>" :
+      "<span class='status-badge fail'>Fail" +
       (ddnsUpdateLog[idx].errorMessage.length() ? ": " + ddnsUpdateLog[idx].errorMessage : "") + "</span>";
-    
-    String logType = "<span class='log-type " + getLogTypeClass(ddnsUpdateLog[idx].logType) + "'>" + 
+
+    String logType = "<span class='log-type " + getLogTypeClass(ddnsUpdateLog[idx].logType) + "'>" +
                      getLogTypeStr(ddnsUpdateLog[idx].logType) + "</span>";
-    
+
     out += "<tr><td" + timeClass + ">" + timeDisplay + "</td><td>" + logType + status + "</td></tr>";
   }
-  
+
   return hasEntries ? out : "<tr><td colspan='2'>No log entries yet</td></tr>";
 }
 
 String loadPersistentLogsHTML() {
   String out = "<table><tr><th>Time</th><th>Event</th></tr>";
-  
+
   preferences.begin(LOG_NAMESPACE, true); // Read-only mode
-  
+
   int logCount = preferences.getInt("log_count", 0);
-  
+
   if (logCount <= 0) {
     out += "<tr><td colspan='2'>No persistent logs found</td></tr>";
   } else {
     int displayCount = min(logCount, PERSISTENT_LOG_SIZE);
     int startIdx = (logCount > PERSISTENT_LOG_SIZE) ? logCount % PERSISTENT_LOG_SIZE : 0;
-    
+
     for (int i = 0; i < displayCount; i++) {
       int idx = (startIdx + i) % PERSISTENT_LOG_SIZE;
       String key = "log_" + String(idx);
-      
+
       PersistentLogEntry entry;
       if (preferences.getBytes(key.c_str(), &entry, sizeof(PersistentLogEntry))) {
         if (entry.timestamp > 0) {
@@ -520,21 +532,21 @@ String loadPersistentLogsHTML() {
           } else {
             timeDisplay = "Timestamp invalid";
           }
-          
+
           String status = entry.status ?
-            "<span class='status-badge success'>Success</span>" : 
-            "<span class='status-badge fail'>Fail" + 
+            "<span class='status-badge success'>Success</span>" :
+            "<span class='status-badge fail'>Fail" +
             (strlen(entry.errorMessage) > 0 ? ": " + String(entry.errorMessage) : "") + "</span>";
-            
-          String logType = "<span class='log-type " + getLogTypeClass(entry.logType) + "'>" + 
+
+          String logType = "<span class='log-type " + getLogTypeClass(entry.logType) + "'>" +
                            getLogTypeStr(entry.logType) + "</span>";
-                           
+
           out += "<tr><td>" + timeDisplay + "</td><td>" + logType + status + "</td></tr>";
         }
       }
     }
   }
-  
+
   preferences.end();
   out += "</table>";
   return out;
@@ -555,7 +567,7 @@ void pageHome() {
 
   String lastupdatestatus = ddns_lastupdatestatus ? "Success" : "Fail";
   String statusClass = ddns_lastupdatestatus ? "success" : "fail";
-  
+
   unsigned long lastupdatetime = 0;
   if (ddns_lastupdatetime > 0 && isTimeSynced()) {
     time_t now = time(nullptr);
@@ -563,7 +575,7 @@ void pageHome() {
       lastupdatetime = now - ddns_lastupdatetime;
     }
   }
-  
+
   unsigned long nextupdatetime = ddns_updatetimer > millis() ?
                                (ddns_updatetimer - millis()) / 1000 : 0;
 
@@ -571,10 +583,10 @@ void pageHome() {
   int rssi = WiFi.isConnected() ? WiFi.RSSI() : 0;
   String uptime = fmtTime(millis() / 1000);
   String fw = "v2.1 Preferences (" __DATE__ " " __TIME__ ")";
-  
+
   String currentTimeStr = "Time not synchronized";
   String ntpStatusStr = "<span class='ntp-status sync-fail'>Not Synced</span>";
-  
+
   if (isTimeSynced()) {
     time_t now;
     struct tm timeinfo;
@@ -595,7 +607,7 @@ void pageHome() {
                "<div class='m'><a href='/'>Status</a> | <a href='/settings'>Settings</a> | <a href='/logs'>System Logs</a></div>"
                "<div class='p'><h2>Status</h2>");
   content += "<p>Current Time: <b>" + currentTimeStr + "</b> " + ntpStatusStr + "</p>";
-  
+
   content += "<h3>NTP Status</h3><p>";
   content += "Sync Attempts: <b>" + String(ntpStatus.syncAttempts) + "</b><br/>";
   content += "Last Sync: <b>" + (ntpStatus.lastSyncTime > 0 ? fmtTime((millis() - ntpStatus.lastSyncTime) / 1000) + " ago" : "Never") + "</b><br/>";
@@ -606,7 +618,7 @@ void pageHome() {
   content += "<p>Last update: <span class='status-badge " + statusClass + "'>" + lastupdatestatus + "</span><br/>"
              "Time since update: <b>" + fmtTime(lastupdatetime) + "</b><br/>"
              "Next update in: <b>" + fmtTime(nextupdatetime) + "</b></p>";
-  
+
   content += "<p><a href='/forcesync'><button>Force DDNS Sync</button></a> ";
   content += "<a href='/forcentp'><button>Force NTP Sync</button></a> ";
   content += "<a href='/clearlogs'><button class='danger'>Clear Logs</button></a></p>";
@@ -616,7 +628,7 @@ void pageHome() {
              "WiFi Signal: <b>" + String(rssi) + " dBm</b><br/>"
              "Uptime: <b>" + uptime + "</b><br/>"
              "Firmware: <b>" + fw + "</b><br/>"
-             "Persistent Logging: <b>" 
+             "Persistent Logging: <b>"
              + String(ddnsConfiguration.persistentLogging ? "Enabled" : "Disabled") + "</b></p>";
 
   content += "<h3>Recent Activity Log</h3>"
@@ -673,7 +685,7 @@ void pageSettings() {
         settingsChanged = true;
       }
     }
-    
+
     // Additional NTP servers
     if (server.hasArg("ns2")) {
       String ntpServer2 = server.arg("ns2");
@@ -683,7 +695,7 @@ void pageSettings() {
         settingsChanged = true;
       }
     }
-    
+
     if (server.hasArg("ns3")) {
       String ntpServer3 = server.arg("ns3");
       if (ntpServer3.length() < sizeof(ddnsConfiguration.tertiaryNtpServer)) {
@@ -706,6 +718,30 @@ void pageSettings() {
       wifiManager.resetSettings();
       enhancedLogAdd(1, 2, "WiFi settings reset");
     }
+
+    if (server.hasArg("dr")) {
+      ddnsConfiguration.enableDailyReboot = server.arg("dr") == "1";
+      settingsChanged = true;
+    } else {
+       ddnsConfiguration.enableDailyReboot = false;
+       settingsChanged = true;
+    }
+
+    if (server.hasArg("rh")) {
+       int hour = server.arg("rh").toInt();
+       if (hour >= 0 && hour <= 23) {
+       ddnsConfiguration.rebootHour = hour;
+       settingsChanged = true;
+      }
+     }
+
+      if (server.hasArg("rm")) {
+          int minute = server.arg("rm").toInt();
+            if (minute >= 0 && minute <= 59) {
+                ddnsConfiguration.rebootMinute = minute;
+                settingsChanged = true;
+            }
+        }
 
     if (settingsChanged) {
       ddnsPreferencesWrite(); // MODIFIED: Call the new save function
@@ -776,7 +812,7 @@ void pageSettings() {
                "<p><label><input type='checkbox' name='r' value='1'> Reset WiFi settings</label></p>"
                "<input type='hidden' name='b' value='1'>"
                "<button type='submit'>Save Settings</button></form>");
-  
+
   content += F("<script>"
                "function validateForm() {"
                "var deviceId = document.getElementsByName('n')[0].value;"
@@ -801,6 +837,17 @@ void pageSettings() {
                "return false;}"
                "return true;}"
                "</script>");
+  content += F("<h3>Scheduled Reboot</h3>"
+                "<p><label><input type='checkbox' name='dr' value='1'");
+  if (ddnsConfiguration.enableDailyReboot) content += F(" checked");
+  content += F("> Enable daily reboot</label></p>"
+                "<p><label>Reboot Time (24h format):</label><br/>"
+                "<input type='number' name='rh' min='0' max='23' value='");
+  content += String(ddnsConfiguration.rebootHour);
+  content += F("' style='width:60px'> : "
+                "<input type='number' name='rm' min='0' max='59' value='");
+  content += String(ddnsConfiguration.rebootMinute);
+  content += F("' style='width:60px'></p>");
 
   content += F("</div></body></html>");
   server.send(200, "text/html", content);
@@ -1015,6 +1062,32 @@ int ddnsUpdate() {
   return 0;
 }
 
+void checkScheduledReboot() {
+    static unsigned long lastRebootCheck = 0;
+
+    if (!ddnsConfiguration.enableDailyReboot || !isTimeSynced()) {
+        return;
+    }
+
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastRebootCheck >= REBOOT_CHECK_INTERVAL) {
+        lastRebootCheck = currentMillis;
+
+        time_t now;
+        struct tm timeinfo;
+        time(&now);
+        localtime_r(&now, &timeinfo);
+
+        if (timeinfo.tm_hour == ddnsConfiguration.rebootHour &&
+            timeinfo.tm_min == ddnsConfiguration.rebootMinute) {
+            enhancedLogAdd(1, 2, "Scheduled daily reboot triggered");
+            delay(1000);
+            ESP.restart();
+        }
+    }
+}
+
+
 void setup() {
   #if defined SERIAL_ENABLED
   Serial.begin(115200);
@@ -1027,22 +1100,22 @@ void setup() {
 
   pinMode(DDNS_STATUSLED, OUTPUT);
   digitalWrite(DDNS_STATUSLED, HIGH);
-  
+
   // Initialize variables
   ddns_lastupdatetime = 0;
   ddns_updatetimer = millis();
   ntp_health_check_timer = millis() + NTP_HEALTH_CHECK_INTERVAL;
   firstUpdate = true;
-  
+
   initNtpStatus();
-  
+
   for (int i = 0; i < DDNS_LOG_SIZE; i++) {
     ddnsUpdateLog[i] = {0, 0, 0, "", false, 0};
   }
   ddnsLogIdx = 0;
 
   ddnsPreferencesInit(); // MODIFIED: Initialize from Preferences
-  
+
   char deviceidc[4];
   snprintf(deviceidc, sizeof(deviceidc), "%03d", ddnsConfiguration.deviceid);
   char hostname[MAX_HOSTNAME_LENGTH];
@@ -1069,7 +1142,7 @@ void setup() {
 
   time_sync_start = millis();
   attemptNtpSync();
-  
+
   enhancedLogAdd(1, 2, "System startup");
 
   if (MDNS.begin(hostname)) {
@@ -1089,10 +1162,10 @@ void setup() {
   server.on("/clearpersistent", handleClearPersistentLogs);
   server.onNotFound(pageNotFound);
   server.begin();
-  
+
   enhancedLogAdd(1, 2, "Web server started on port 80");
   checkconnection_timer = millis();
-  
+
   #if defined SERIAL_ENABLED
   Serial.println("Setup completed successfully!");
   #endif
@@ -1107,9 +1180,10 @@ void loop() {
       wifiManagerSetStatus(WIFIMANAGERSETSTATUS_CONNECTED);
     }
   }
+  checkScheduledReboot();
 
   server.handleClient();
-  
+
   if (isTimeExpired(ntp_health_check_timer)) {
     ntp_health_check_timer = millis() + NTP_HEALTH_CHECK_INTERVAL;
     checkNtpHealth();

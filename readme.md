@@ -2,7 +2,7 @@
 
 This project is an open-source, standalone Dynamic DNS (DDNS) client for **DuckDNS.org** that runs on an **ESP32** microcontroller. This enhanced version is a complete overhaul, offering a robust, feature-rich, and secure solution to keep your DuckDNS domain pointed to your home's dynamic IP address.
 
-It was adapted from the original ESP8266 DuckDNS client created by Davide Gironi @davidegironi (https://davidegironi.blogspot.com/2017/02/duck-dns-esp8266-mini-wifi-client.html). 
+It was adapted from the original ESP8266 DuckDNS client created by Davide Gironi @davidegironi (https://davidegironi.blogspot.com/2017/02/duck-dns-esp8266-mini-wifi-client.html).
 
 **Version with NTP and persisting logging**
 ![Web Interface Status Page](images/webclient_1_NTP.png)
@@ -26,6 +26,7 @@ It was adapted from the original ESP8266 DuckDNS client created by Davide Gironi
 * **Detailed Logging**: View both current session and persistent logs directly from the web interface, with clear success/fail indicators and event types (DDNS, NTP, System).
 * **JSON API**: A comprehensive API endpoint provides the device's status in a JSON format, perfect for integration with systems like Home Assistant.
 * **Without memory leaks :-)**: Refactored persistent storage code to use the ESP32 Preferences library.
+* **Automatic Reboots can be programmed**
 
 ---
 
