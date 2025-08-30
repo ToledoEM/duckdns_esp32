@@ -73,13 +73,15 @@ struct ddnsConfig {
 #define PERSISTENT_LOG_SIZE 50
 #define EEPROM_LOG_OFFSET 256
 
+// Fixed-size log entry to prevent memory fragmentation
 struct EnhancedLogEntry {
-  time_t timestamp; // Correct type
-  unsigned long localTime;      // Backup timing using millis()
+  time_t timestamp;            // Correct type
+  unsigned long localTime;     // Backup timing using millis()
   int status;
-  String errorMessage;
-  bool timestampValid;          // Flag for timestamp reliability
-  uint8_t logType;             // 0=DDNS, 1=NTP, 2=System
+  char errorMessage[128];      // Fixed-size buffer instead of String
+  bool timestampValid;         // Flag for timestamp reliability
+  uint8_t logType;            // 0=DDNS, 1=NTP, 2=System
+  bool hasError;              // Flag to indicate if error message is present
 };
 
 EnhancedLogEntry ddnsUpdateLog[DDNS_LOG_SIZE];
@@ -293,27 +295,35 @@ void enhancedLogAdd(int status, uint8_t logType, const String& errorMsg) {
     time_t now = time(nullptr);
     unsigned long currentTime = millis();
     
-    ddnsUpdateLog[ddnsLogIdx] = {
-      .timestamp = now,
-      .localTime = currentTime,
-      .status = status,
-      .errorMessage = errorMsg,
-      .timestampValid = isTimeReasonable(),
-      .logType = logType
-    };
+    EnhancedLogEntry& entry = ddnsUpdateLog[ddnsLogIdx];
+    entry.timestamp = now;
+    entry.localTime = currentTime;
+    entry.status = status;
+    entry.timestampValid = isTimeReasonable();
+    entry.logType = logType;
+    entry.hasError = false;
+    
+    if (errorMsg.length() > 0) {
+      strncpy(entry.errorMessage, errorMsg.c_str(), sizeof(entry.errorMessage) - 1);
+      entry.errorMessage[sizeof(entry.errorMessage) - 1] = '\0';
+      entry.hasError = true;
+    } else {
+      entry.errorMessage[0] = '\0';
+    }
     
     ddnsLogIdx = (ddnsLogIdx + 1) % DDNS_LOG_SIZE;
     
-    // Store in persistent memory if enabled
     if (ddnsConfiguration.persistentLogging) {
-      saveToPersistentLog(ddnsUpdateLog[(ddnsLogIdx - 1 + DDNS_LOG_SIZE) % DDNS_LOG_SIZE]);
+      saveToPersistentLog(entry);
     }
     
 #if defined SERIAL_ENABLED
-    Serial.println("Enhanced log entry added - Type: " + getLogTypeStr(logType) + 
-                   ", Status: " + String(status) + 
-                   ", Valid TS: " + String(isTimeReasonable()) + 
-                   ", Message: " + errorMsg);
+    char logBuffer[256];
+    snprintf(logBuffer, sizeof(logBuffer),
+             "Enhanced log entry added - Type: %s, Status: %d, Valid TS: %d, Message: %s",
+             getLogTypeStr(logType), status, isTimeReasonable(),
+             entry.hasError ? entry.errorMessage : "none");
+    Serial.println(logBuffer);
 #endif
   }
 }
@@ -344,12 +354,18 @@ void updatePendingTimestamps() {
 }
 
 void saveToPersistentLog(const EnhancedLogEntry& entry) {
-  // Read current persistent log count
-  int logCount = 0;
-  EEPROM.get(EEPROM_LOG_OFFSET, logCount);
+  static unsigned long lastCommitTime = 0;
+  static int pendingWrites = 0;
+  const int COMMIT_THRESHOLD = 5;  // Number of writes before forcing a commit
+  const unsigned long COMMIT_INTERVAL = 30000;  // Minimum time between commits (30 seconds)
   
-  if (logCount < 0 || logCount >= PERSISTENT_LOG_SIZE) {
-    logCount = 0; // Reset if corrupted
+  // Read current persistent log count
+  static int logCount = -1;  // Cache the log count
+  if (logCount == -1) {
+    EEPROM.get(EEPROM_LOG_OFFSET, logCount);
+    if (logCount < 0 || logCount >= PERSISTENT_LOG_SIZE) {
+      logCount = 0;  // Reset if corrupted
+    }
   }
   
   // Prepare persistent entry
@@ -357,7 +373,7 @@ void saveToPersistentLog(const EnhancedLogEntry& entry) {
   persistentEntry.timestamp = entry.timestamp;
   persistentEntry.localTime = entry.localTime;
   persistentEntry.status = entry.status;
-  strncpy(persistentEntry.errorMessage, entry.errorMessage.c_str(), 31);
+  strncpy(persistentEntry.errorMessage, entry.errorMessage, 31);
   persistentEntry.errorMessage[31] = '\0';
   persistentEntry.timestampValid = entry.timestampValid;
   persistentEntry.logType = entry.logType;
@@ -372,53 +388,91 @@ void saveToPersistentLog(const EnhancedLogEntry& entry) {
   // Update count
   logCount++;
   EEPROM.put(EEPROM_LOG_OFFSET, logCount);
-  EEPROM.commit();
+  
+  // Increment pending writes counter
+  pendingWrites++;
+  
+  // Commit to EEPROM if threshold reached or enough time has passed
+  unsigned long currentTime = millis();
+  if (pendingWrites >= COMMIT_THRESHOLD || 
+      (pendingWrites > 0 && (currentTime - lastCommitTime) >= COMMIT_INTERVAL)) {
+    EEPROM.commit();
+    lastCommitTime = currentTime;
+    pendingWrites = 0;
+  }
 }
 
 String enhancedLogTableHTML() {
-  String out = "";
-  char time_str[30];
+  // Pre-allocate a reasonably sized string buffer
+  String out;
+  out.reserve(DDNS_LOG_SIZE * 256);  // Estimate max size needed
+  
+  char time_str[32];
+  char row_buffer[512];  // Buffer for building each row
   bool hasEntries = false;
+  
+  // Static strings to avoid recreating them in loop
+  static const char* WARNING_CLASS = " class='warning'";
+  static const char* FAIL_CLASS = " class='fail'";
+  static const char* INFO_CLASS = " class='info'";
+  static const char* SUCCESS_SPAN = "<span class='status-badge success'>Success</span>";
+  static const char* FAIL_SPAN_START = "<span class='status-badge fail'>Fail";
+  static const char* SPAN_END = "</span>";
   
   for (int i = 0; i < DDNS_LOG_SIZE; i++) {
     int idx = (ddnsLogIdx + i) % DDNS_LOG_SIZE;
-    // Skip completely empty entries
-    if (ddnsUpdateLog[idx].timestamp == 0 && ddnsUpdateLog[idx].localTime == 0 && 
-        ddnsUpdateLog[idx].status == 0 && ddnsUpdateLog[idx].errorMessage == "") continue;
+    const EnhancedLogEntry& entry = ddnsUpdateLog[idx];
+    
+    // Skip empty entries
+    if (entry.timestamp == 0 && entry.localTime == 0 && 
+        entry.status == 0 && !entry.hasError) continue;
 
     hasEntries = true;
-    String timeDisplay;
-    String timeClass = "";
+    const char* timeClass = "";
+    char timeDisplay[64] = {0};
     
-    if (!ddnsUpdateLog[idx].timestampValid || ddnsUpdateLog[idx].timestamp < 1672531200) {
-      if (ddnsUpdateLog[idx].localTime > 0) {
-        timeDisplay = "~" + fmtTime((millis() - ddnsUpdateLog[idx].localTime) / 1000) + " ago";
-        timeClass = " class='warning'";
+    if (!entry.timestampValid || entry.timestamp < 1672531200) {
+      if (entry.localTime > 0) {
+        char ago_buf[32];
+        strcpy(ago_buf, fmtTime((millis() - entry.localTime) / 1000).c_str());
+        snprintf(timeDisplay, sizeof(timeDisplay), "~%s ago", ago_buf);
+        timeClass = WARNING_CLASS;
       } else {
-        timeDisplay = "Undetermined";
-        timeClass = " class='fail'";
+        strcpy(timeDisplay, "Undetermined");
+        timeClass = FAIL_CLASS;
       }
     } else {
-      // Format real timestamps
       struct tm timeinfo;
-      localtime_r(&ddnsUpdateLog[idx].timestamp, &timeinfo);
-      strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", &timeinfo);
-      timeDisplay = String(time_str);
-      if (!ddnsUpdateLog[idx].timestampValid) {
-        timeDisplay += " (est)";
-        timeClass = " class='info'";
+      localtime_r(&entry.timestamp, &timeinfo);
+      strftime(timeDisplay, sizeof(timeDisplay), "%Y-%m-%d %H:%M:%S", &timeinfo);
+      if (!entry.timestampValid) {
+        strcat(timeDisplay, " (est)");
+        timeClass = INFO_CLASS;
       }
     }
 
-    String status = ddnsUpdateLog[idx].status ? 
-      "<span class='status-badge success'>Success</span>" : 
-      "<span class='status-badge fail'>Fail" + 
-      (ddnsUpdateLog[idx].errorMessage.length() ? ": " + ddnsUpdateLog[idx].errorMessage : "") + "</span>";
+    // Build status string
+    const char* status_start = entry.status ? SUCCESS_SPAN : FAIL_SPAN_START;
     
-    String logType = "<span class='log-type " + getLogTypeClass(ddnsUpdateLog[idx].logType) + "'>" + 
-                     getLogTypeStr(ddnsUpdateLog[idx].logType) + "</span>";
+    // Build log type string using static buffer
+    char logTypeSpan[96];
+    snprintf(logTypeSpan, sizeof(logTypeSpan), 
+             "<span class='log-type %s'>%s</span>",
+             getLogTypeClass(entry.logType),
+             getLogTypeStr(entry.logType));
     
-    out += "<tr><td" + timeClass + ">" + timeDisplay + "</td><td>" + logType + status + "</td></tr>";
+    // Construct the row
+    snprintf(row_buffer, sizeof(row_buffer),
+             "<tr><td%s>%s</td><td>%s%s%s%s%s</td></tr>",
+             timeClass,
+             timeDisplay,
+             logTypeSpan,
+             status_start,
+             (entry.hasError ? ": " : ""),
+             (entry.hasError ? entry.errorMessage : ""),
+             SPAN_END);
+    
+    out += row_buffer;
   }
   
   return hasEntries ? out : "<tr><td colspan='2'>No log entries yet</td></tr>";
@@ -485,8 +539,9 @@ bool authenticate() {
 
 // Enhanced web page handlers
 void pageHome() {
+  // Pre-allocate all strings with reasonable sizes
   String content;
-  content.reserve(6144);
+  content.reserve(8192);  // Increased for safety
 
   String lastupdatestatus = ddns_lastupdatestatus ? "Success" : "Fail";
   String statusClass = ddns_lastupdatestatus ? "success" : "fail";
@@ -502,15 +557,23 @@ void pageHome() {
   
   unsigned long nextupdatetime = ddns_updatetimer > millis() ? (ddns_updatetimer - millis()) / 1000 : 0;
 
-  String ip = WiFi.isConnected() ? WiFi.localIP().toString() : "N/A";
+  // Use stack-based char arrays for small strings
+  char ip[16];  // IPv4 max length: 15 chars + null terminator
+  if (WiFi.isConnected()) {
+    strncpy(ip, WiFi.localIP().toString().c_str(), sizeof(ip) - 1);
+    ip[sizeof(ip) - 1] = '\0';
+  } else {
+    strcpy(ip, "N/A");
+  }
+  
   int rssi = WiFi.isConnected() ? WiFi.RSSI() : 0;
+  
   String uptime = fmtTime(millis() / 1000);
-  String fw = "v2.0 Enhanced (" __DATE__ " " __TIME__ ")";
+  String fw = String("v2.0 Enhanced (") + __DATE__ + " " + __TIME__ + ")";
 
   // Enhanced current time display with NTP status
   String currentTimeStr = "Time not synchronized";
   String ntpStatusStr = "<span class='ntp-status sync-fail'>Not Synced</span>";
-  
   if (isTimeSynced()) {
     time_t now;
     struct tm timeinfo;
@@ -519,7 +582,7 @@ void pageHome() {
     char time_str[30];
     strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S %Z", &timeinfo);
     currentTimeStr = String(time_str);
-    ntpStatusStr = "<span class='ntp-status sync-ok'>Synchronized</span>";
+    ntpStatusStr = String("<span class='ntp-status sync-ok'>Synchronized</span>");
   }
 
   content = F("<!DOCTYPE html><html lang='en'><head>"
@@ -541,21 +604,21 @@ void pageHome() {
   content += "</p>";
 
   content += "<h3>DDNS Status</h3>";
-  content += "<p>Last update: <span class='status-badge " + statusClass + "'>" + lastupdatestatus + "</span><br/>"
-             "Time since update: <b>" + fmtTime(lastupdatetime) + "</b><br/>"
-             "Next update in: <b>" + fmtTime(nextupdatetime) + "</b></p>";
+  content += "<p>Last update: <span class='status-badge " + statusClass + "'>" + lastupdatestatus + "</span><br/>";
+  content += "Time since update: <b>" + fmtTime(lastupdatetime) + "</b><br/>";
+  content += "Next update in: <b>" + fmtTime(nextupdatetime) + "</b></p>";
 
   // Action buttons
   content += "<p><a href='/forcesync'><button>Force DDNS Sync</button></a> ";
   content += "<a href='/forcentp'><button>Force NTP Sync</button></a> ";
   content += "<a href='/clearlogs'><button class='danger'>Clear Logs</button></a></p>";
 
-  content += "<h3>Device Info</h3>"
-             "<p>IP Address: <b>" + ip + "</b><br/>"
-             "WiFi Signal: <b>" + String(rssi) + " dBm</b><br/>"
-             "Uptime: <b>" + uptime + "</b><br/>"
-             "Firmware: <b>" + fw + "</b><br/>"
-             "Persistent Logging: <b>" + String(ddnsConfiguration.persistentLogging ? "Enabled" : "Disabled") + "</b></p>";
+  content += "<h3>Device Info</h3>";
+  content += "<p>IP Address: <b>" + String(ip) + "</b><br/>";
+  content += "WiFi Signal: <b>" + String(rssi) + " dBm</b><br/>";
+  content += "Uptime: <b>" + uptime + "</b><br/>";
+  content += "Firmware: <b>" + fw + "</b><br/>";
+  content += "Persistent Logging: <b>" + String(ddnsConfiguration.persistentLogging ? "Enabled" : "Disabled") + "</b></p>";
 
   content += "<h3>Recent Activity Log</h3>"
              "<table><tr><th>Time</th><th>Event</th></tr>"
@@ -844,39 +907,98 @@ void handleClearPersistentLogs() {
 }
 
 void pageApiStatus() {
+  // Pre-calculate buffer size
+  const size_t bufferSize = 2048 + (DDNS_LOG_SIZE * 256); // Base size + max log entries
   String json;
-  json.reserve(2048);
-  json = "{";
-  json += "\"status\":\"" + String(ddns_lastupdatestatus ? "success" : "fail") + "\",";
-  json += "\"last_update\":" + String(ddns_lastupdatetime) + ",";
-  json += "\"next_update\":" + String(ddns_updatetimer > millis() ? (ddns_updatetimer - millis()) / 1000 : 0) + ",";
-  json += "\"ip\":\"" + (WiFi.isConnected() ? WiFi.localIP().toString() : "N/A") + "\",";
-  json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
-  json += "\"uptime\":" + String(millis() / 1000) + ",";
-  json += "\"time_synced\":" + String(isTimeSynced() ? "true" : "false") + ",";
-  json += "\"ntp_attempts\":" + String(ntpStatus.syncAttempts) + ",";
-  json += "\"ntp_last_sync\":" + String(ntpStatus.lastSyncTime) + ",";
-  json += "\"persistent_logging\":" + String(ddnsConfiguration.persistentLogging ? "true" : "false") + ",";
-  json += "\"log\":[";
+  json.reserve(bufferSize);
+  
+  // Use a static buffer for formatting numbers
+  char numBuf[32];
+  
+  json = "{\"status\":\"";
+  json += ddns_lastupdatestatus ? "success" : "fail";
+  json += "\",\"last_update\":";
+  ltoa(ddns_lastupdatetime, numBuf, 10);
+  json += numBuf;
+  
+  json += ",\"next_update\":";
+  ltoa(ddns_updatetimer > millis() ? (ddns_updatetimer - millis()) / 1000 : 0, numBuf, 10);
+  json += numBuf;
+  
+  json += ",\"ip\":\"";
+  if (WiFi.isConnected()) {
+    json += WiFi.localIP().toString();
+  } else {
+    json += "N/A";
+  }
+  json += "\",\"rssi\":";
+  itoa(WiFi.RSSI(), numBuf, 10);
+  json += numBuf;
+  
+  json += ",\"uptime\":";
+  ultoa(millis() / 1000, numBuf, 10);
+  json += numBuf;
+  
+  json += ",\"time_synced\":";
+  json += isTimeSynced() ? "true" : "false";
+  
+  json += ",\"ntp_attempts\":";
+  itoa(ntpStatus.syncAttempts, numBuf, 10);
+  json += numBuf;
+  
+  json += ",\"ntp_last_sync\":";
+  ultoa(ntpStatus.lastSyncTime, numBuf, 10);
+  json += numBuf;
+  
+  json += ",\"persistent_logging\":";
+  json += ddnsConfiguration.persistentLogging ? "true" : "false";
+  
+  json += ",\"log\":[";
 
   bool firstLog = true;
   for (int i = 0; i < DDNS_LOG_SIZE; i++) {
     int idx = (ddnsLogIdx + i) % DDNS_LOG_SIZE;
     if (ddnsUpdateLog[idx].timestamp == 0 && ddnsUpdateLog[idx].localTime == 0) continue;
+    
     if (!firstLog) json += ",";
-    json += "{\"time\":" + String(ddnsUpdateLog[idx].timestamp);
-    json += ",\"local_time\":" + String(ddnsUpdateLog[idx].localTime);
-    json += ",\"status\":\"" + String(ddnsUpdateLog[idx].status ? "success" : "fail") + "\"";
-    json += ",\"type\":\"" + getLogTypeStr(ddnsUpdateLog[idx].logType) + "\"";
-    json += ",\"timestamp_valid\":" + String(ddnsUpdateLog[idx].timestampValid ? "true" : "false");
-    if (ddnsUpdateLog[idx].errorMessage.length() > 0) {
-      json += ",\"error\":\"" + ddnsUpdateLog[idx].errorMessage + "\"";
+    
+    json += "{\"time\":";
+    ltoa(ddnsUpdateLog[idx].timestamp, numBuf, 10);
+    json += numBuf;
+    
+    json += ",\"local_time\":";
+    ultoa(ddnsUpdateLog[idx].localTime, numBuf, 10);
+    json += numBuf;
+    
+    json += ",\"status\":\"";
+    json += ddnsUpdateLog[idx].status ? "success" : "fail";
+    json += "\"";
+    
+    json += ",\"type\":\"";
+    json += getLogTypeStr(ddnsUpdateLog[idx].logType);
+    json += "\"";
+    
+    json += ",\"timestamp_valid\":";
+    json += ddnsUpdateLog[idx].timestampValid ? "true" : "false";
+    
+    if (ddnsUpdateLog[idx].hasError && ddnsUpdateLog[idx].errorMessage[0] != '\0') {
+      json += ",\"error\":\"";
+      // Escape special characters in error message
+      for (size_t j = 0; ddnsUpdateLog[idx].errorMessage[j] != '\0' && j < sizeof(ddnsUpdateLog[idx].errorMessage); j++) {
+        char c = ddnsUpdateLog[idx].errorMessage[j];
+        if (c == '"' || c == '\\') json += '\\';
+        json += c;
+      }
+      json += "\"";
     }
+    
     json += "}";
     firstLog = false;
   }
   json += "]}";
-  server.send(200, "application/json", json);
+  
+  // Send response with move semantics to avoid copying
+  server.send(200, "application/json", std::move(json));
 }
 
 // EEPROM functions
@@ -961,19 +1083,25 @@ void wifiManagerSetStatus(int status) {
 
 // Enhanced DDNS update function
 int ddnsUpdate() {
-  WiFiClientSecure client;
+  std::unique_ptr<WiFiClientSecure> client(new WiFiClientSecure());
   HTTPClient http;
-  String error_message = "";
+  String error_message;
+  error_message.reserve(128); // Pre-allocate memory
 
   try {
-    client.setInsecure();
+    client->setInsecure();
 
-    String url = "https://www.duckdns.org/update?domains=";
-    url += String(ddnsConfiguration.domain);
-    url += "&token=" + String(ddnsConfiguration.token);
+    // Pre-calculate URL size and reserve memory
+    const size_t url_size = 128 + strlen(ddnsConfiguration.domain) + strlen(ddnsConfiguration.token);
+    String url;
+    url.reserve(url_size);
+    url = "https://www.duckdns.org/update?domains=";
+    url += ddnsConfiguration.domain;
+    url += "&token=";
+    url += ddnsConfiguration.token;
     url += "&ip=";
 
-    if (!http.begin(client, url)) {
+    if (!http.begin(*client, url)) {
       throw std::runtime_error("Failed to initialize HTTP client");
     }
 
@@ -981,12 +1109,17 @@ int ddnsUpdate() {
     int httpCode = http.GET();
     
     if (httpCode != HTTP_CODE_OK) {
-      throw std::runtime_error(("HTTP error: " + String(httpCode)).c_str());
+      error_message = "HTTP error: ";
+      error_message += String(httpCode);
+      throw std::runtime_error(error_message.c_str());
     }
 
-    String payload = http.getString();
+    // Use getString() with move semantics
+    String payload = std::move(http.getString());
     if (payload != "OK") {
-      throw std::runtime_error(("Invalid response: " + payload).c_str());
+      error_message = "Invalid response: ";
+      error_message += payload;
+      throw std::runtime_error(error_message.c_str());
     }
 
     // Success
