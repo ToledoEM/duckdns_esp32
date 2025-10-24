@@ -126,11 +126,6 @@ Once the device is connected to your network, you need to configure it.
   * **Device ID** (used for hostname `testduckNNN`)
 6.  Click **"Save Settings"**. The device will save your settings and reboot.
 
-![Web Interface Status Page](images/webclient_2_NTP.png)
-
-![Web Interface Status Page](images/webclient_3_NTP.png)
-
-
 That's it! The ESP32 is now fully configured.
 
 
@@ -145,6 +140,9 @@ That's it! The ESP32 is now fully configured.
 * `/forcentp` — Force NTP sync (302 redirect to `/`)
 
 ---
+
+
+![Json](images/apijson.png)
 
 ```json
 {
