@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# VS Code / Editors
+.vscode/
+.history/
+.idea/
+*.code-workspace
+
+# Arduino / ESP32 / PlatformIO
+.arduino-build/
+.arduinoIDE/
+.pio/
+.pioenvs/
+.piolibdeps/
+.ccls-cache/
+.clangd/
+
+# Build artifacts
+build/
+dist/
+*.bin
+*.elf
+*.map
+*.hex
+*.uf2
+
+# Logs
+*.log
+
+# Environment files
+.env
+.env.*

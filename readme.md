@@ -2,40 +2,78 @@
 
 This project is an open-source, standalone Dynamic DNS (DDNS) client for **DuckDNS.org** that runs on an **ESP32** microcontroller. This enhanced version is a complete overhaul, offering a robust, feature-rich, and secure solution to keep your DuckDNS domain pointed to your home's dynamic IP address.
 
+
+---
+
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 It was adapted from the original ESP8266 DuckDNS client created by Davide Gironi @davidegironi (https://davidegironi.blogspot.com/2017/02/duck-dns-esp8266-mini-wifi-client.html).
 
-**Version with NTP and persisting logging**
+**Version with NTP and persistent logging**
 ![Web Interface Status Page](images/webclient_1_NTP.png)
 
 
 ---
 
-## Features
+## Configuration Stored in EEPROM
 
-* **ESP32 Compatible**: Runs on the powerful and versatile ESP32 platform.
-* **WiFi Manager**: No need to hardcode WiFi credentials. On first boot, it creates an access point for you to easily connect it to your local network.
-* **Modern Web Interface**: A clean, mobile-responsive web interface to:
-    * View detailed DDNS and NTP (Network Time Protocol) status.
-    * See device uptime, IP address, and WiFi signal strength.
-    * Force manual DDNS or NTP syncs.
-* **Secure Configuration**: The settings page is password-protected (`user` / `pass`) to prevent unauthorized changes.
-* **Advanced Time Management**:
-    * Robust NTP synchronization with primary and fallback servers.
-    * Accurate, timestamped logging. Logs created before time sync are automatically updated with an estimated timestamp.
-* **Persistent Logging**: Option to save system and update logs to the ESP32's internal flash, preserving them across reboots.
-* **Detailed Logging**: View both current session and persistent logs directly from the web interface, with clear success/fail indicators and event types (DDNS, NTP, System).
-* **JSON API**: A comprehensive API endpoint provides the device's status in a JSON format, perfect for integration with systems like Home Assistant.
-* **Without memory leaks :-)**: Refactored persistent storage code to use the ESP32 Preferences library.
-* **Automatic Reboots can be programmed**
+Config fields:
+* Device ID (0–999)
+* DuckDNS domain
+* DuckDNS token
+* Update interval (minutes)
+* Optional custom NTP server
+* Persistent logging flag
+
+EEPROM details:
+* Size: 512 bytes; init marker `0x10`
+* Persistent log ring (20 entries) stored after the config block
+* Batched commits (every 30s or on critical failure) to reduce wear
+
+Defaults on first boot:
+* `deviceid = 1`, `domain = "your-domain"`, `token = "your-token"`, `updateinterval = 10`, `ntpServer = "time.local"`, `persistentLogging = false`
 
 ---
 
-## Setup & Installation
+## Security Notes
 
-### 1. Hardware
+* Settings page protected with HTTP Basic Auth
+  * Defaults: `user` / `pass`
+  * Change in code: `ADMIN_USERNAME` / `ADMIN_PASSWORD`
+* HTTPS to DuckDNS uses `setInsecure()` (no cert validation). For strict TLS, add certificate pinning to `WiFiClientSecure`.
 
-* An ESP32 Development Board (e.g., ESP32-DevKitC, NodeMCU-32S).
+---
 
+## LED Status
+
+GPIO 2 is used for status LEDs:
+* WiFiManager AP mode: fast blink
+* WiFi connecting: slow blink
+* WiFi connected: steady on
+* DDNS failure: DDNS LED blinks until next success
+
+---
+
+## Troubleshooting
+
+* If NTP fails at boot, the system proceeds after ~2 minutes and retries via health checks (every 30 minutes).
+* Ensure DuckDNS domain and token are correct on the Settings page.
+* If mDNS (`.local`) doesn’t resolve, use the device IP.
+* Use the Serial Monitor for detailed logs (baud 115200).
+
+---
+
+## Changelog (v6)
+
+* Reduced EEPROM data sizes; total EEPROM size = 512 bytes
+* Optional persistent logging to EEPROM with batched commits (30s or on critical failure)
+* In-memory log ring (8 entries) and timestamp backfill after NTP sync
+* NTP multi-server fallback and periodic health checks
+* Memory pressure monitoring with defensive restart on very low heap
+* Safer string handling and bounded buffers
+* Simplified web UI and handlers; Basic Auth on Settings page
+* Hostname derived from device ID: `testduckNNN`
 ### 2. Software & Libraries
 
 1.  Make sure you have the **Arduino IDE** installed with the **ESP32 board support package**.
@@ -45,10 +83,10 @@ It was adapted from the original ESP8266 DuckDNS client created by Davide Gironi
 
 ### 3. Flashing the Code
 
-1.  Open the `esp32duckdns_withapi$version.ino` file in the Arduino IDE or a compatible editor like VS Code with the PlatformIO extension.
-2.  Select your ESP32 board from the `Tools` > `Board` menu.
-3.  Select the correct COM port under the `Tools` > `Port` menu.
-4.  Click the "Upload" button.
+1. Open `firmware/esp32duckdns_v6.ino` in the Arduino IDE or a compatible editor like VS Code.
+2. Select your ESP32 board from the `Tools` > `Board` menu.
+3. Select the correct COM port under the `Tools` > `Port` menu.
+4. Click the "Upload" button.
 
 ---
 
@@ -59,7 +97,7 @@ It was adapted from the original ESP8266 DuckDNS client created by Davide Gironi
 The first time you power on the ESP32, it will automatically enter configuration mode.
 
 1.  Using your phone or computer, scan for new Wi-Fi networks.
-2.  Connect to the network named **`ESP32-DuckDNS-Enhanced`**.
+2.  Connect to the network named **`ESP32-DuckDNS`**.
 3.  A captive portal page should automatically open in your browser. If not, open a browser and navigate to `192.168.4.1`.
 4.  Click on **"Configure WiFi"**, select your home network (SSID), and enter its password.
 5.  Click **"Save"**. The ESP32 will save the credentials, reboot, and automatically connect to your home network.
@@ -81,11 +119,11 @@ Once the device is connected to your network, you need to configure it.
     * **Username**: `user` (these are configurable within the first 20 lines of code)
     * **Password**: `pass`
 5.  On the settings page, you can configure:
-    * **DuckDNS Domain** and **Token**.
-    * **Update Interval** in minutes.
-    * Primary, Secondary, and Tertiary **NTP Servers**.
-    * Enable/Disable **Persistent Logging**.
-    * Optionally reset WiFi settings on the next boot.
+  * **DuckDNS Domain** and **Token**
+  * **Update Interval** (minutes)
+  * **NTP Server** (optional; falls back to built-in servers)
+  * **Persistent Logging** toggle
+  * **Device ID** (used for hostname `testduckNNN`)
 6.  Click **"Save Settings"**. The device will save your settings and reboot.
 
 ![Web Interface Status Page](images/webclient_2_NTP.png)
@@ -101,11 +139,12 @@ That's it! The ESP32 is now fully configured.
 
 ## Home Assistant Integration
 
-You can integrate the client with Home Assistant using the RESTful sensor platform. The API endpoint at `http://[device_ip]/api/status` provides a detailed JSON response.
+* `/` — Status page (no authentication)
+* `/settings` — Settings page (Basic Auth: `user` / `pass`)
+* `/forcesync` — Force DDNS update (302 redirect to `/`)
+* `/forcentp` — Force NTP sync (302 redirect to `/`)
 
-### API Response
-
-The API returns a rich JSON object, perfect for creating multiple sensors in Home Assistant.
+---
 
 ```json
 {
