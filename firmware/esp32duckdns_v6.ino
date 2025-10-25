@@ -60,11 +60,11 @@ struct ddnsConfig {
   char initialized;
   int deviceid;
   char domain[32];          // Reduced from 65
-  char token[32];           // Reduced from 37
+  char token[41];           // Full DuckDNS token is 40 chars + null terminator
   int updateinterval;
   char ntpServer[32];       // Reduced from 65
   bool persistentLogging;
-  char reserved[7];         // Padding for alignment
+  char reserved[2];         // Padding for alignment
 } ddnsConfiguration;
 
 // Reduced Log Entry Structure for memory optimization
