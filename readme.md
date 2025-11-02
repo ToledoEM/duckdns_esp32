@@ -3,18 +3,9 @@
 This project is an open-source, standalone Dynamic DNS (DDNS) client for **DuckDNS.org** that runs on an **ESP32** microcontroller. This enhanced version is a complete overhaul, offering a robust, feature-rich, and secure solution to keep your DuckDNS domain pointed to your home's dynamic IP address.
 
 
----
-
-## License
-
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-It was adapted from the original ESP8266 DuckDNS client created by Davide Gironi @davidegironi (https://davidegironi.blogspot.com/2017/02/duck-dns-esp8266-mini-wifi-client.html).
-
 **Version with NTP and persistent logging**
 ![Web Interface Status Page](images/webclient_1_NTP.png)
 
-
----
 
 ## Configuration Stored in EEPROM
 
@@ -64,7 +55,7 @@ GPIO 2 is used for status LEDs:
 
 ---
 
-## Changelog (v6)
+## Changelog
 
 * Reduced EEPROM data sizes; total EEPROM size = 512 bytes
 * Optional persistent logging to EEPROM with batched commits (30s or on critical failure)
@@ -74,6 +65,8 @@ GPIO 2 is used for status LEDs:
 * Safer string handling and bounded buffers
 * Simplified web UI and handlers; Basic Auth on Settings page
 * Hostname derived from device ID: `testduckNNN`
+
+
 ### 2. Software & Libraries
 
 1.  Make sure you have the **Arduino IDE** installed with the **ESP32 board support package**.
@@ -83,7 +76,7 @@ GPIO 2 is used for status LEDs:
 
 ### 3. Flashing the Code
 
-1. Open `firmware/esp32duckdns_v6.ino` in the Arduino IDE or a compatible editor like VS Code.
+1. Open `firmware/esp32duckdns.ino` in the Arduino IDE or a compatible editor like VS Code.
 2. Select your ESP32 board from the `Tools` > `Board` menu.
 3. Select the correct COM port under the `Tools` > `Port` menu.
 4. Click the "Upload" button.
@@ -103,6 +96,7 @@ The first time you power on the ESP32, it will automatically enter configuration
 5.  Click **"Save"**. The ESP32 will save the credentials, reboot, and automatically connect to your home network.
 
 ### Device Configuration
+
 ![Settings Page](images/webclient_3.png)
 
 ![Settings Page](images/webclient_4.png)
@@ -175,3 +169,10 @@ That's it! The ESP32 is now fully configured.
     }
   ]
 }
+```
+
+
+### License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+It was adapted from the original ESP8266 DuckDNS client created by Davide Gironi @davidegironi (https://davidegironi.blogspot.com/2017/02/duck-dns-esp8266-mini-wifi-client.html).
