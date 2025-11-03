@@ -680,6 +680,44 @@ void handleForceNtpSync() {
   server.send(302, "text/plain", "");
 }
 
+// API endpoint for JSON status
+void handleApiStatus() {
+  String json = "{";
+  json += "\"status\":\"success\",";
+  json += "\"last_update\":" + String(ddns_lastupdatetime) + ",";
+  json += "\"next_update\":" + String(ddns_updatetimer > millis() ? (ddns_updatetimer - millis()) / 1000 : 0) + ",";
+  json += "\"ip\":\"" + WiFi.localIP().toString() + "\",";
+  json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
+  json += "\"uptime\":" + String(millis() / 1000) + ",";
+  json += "\"time_synced\":" + String(isTimeSynced() ? "true" : "false") + ",";
+  json += "\"ntp_attempts\":" + String(ntpStatus.syncAttempts) + ",";
+  json += "\"ntp_last_sync\":" + String(ntpStatus.lastSyncTime) + ",";
+  json += "\"persistent_logging\":" + String(ddnsConfiguration.persistentLogging ? "true" : "false") + ",";
+  json += "\"log\":[";
+  
+  bool first = true;
+  for (int i = 0; i < DDNS_LOG_SIZE; i++) {
+    int idx = (ddnsLogIdx + i) % DDNS_LOG_SIZE;
+    const EnhancedLogEntry& entry = ddnsUpdateLog[idx];
+    if (entry.timestamp == 0 && entry.localTime == 0) continue;
+    
+    if (!first) json += ",";
+    json += "{";
+    json += "\"time\":" + String(entry.timestampValid ? entry.timestamp : 0) + ",";
+    json += "\"local_time\":" + String(entry.localTime) + ",";
+    json += "\"status\":\"" + String(entry.status ? "success" : "fail") + "\",";
+    json += "\"type\":\"" + String(getLogTypeStr(entry.logType)) + "\",";
+    json += "\"timestamp_valid\":" + String(entry.timestampValid ? "true" : "false") + ",";
+    json += "\"error\":\"" + String(entry.errorMessage) + "\"";
+    json += "}";
+    first = false;
+  }
+  
+  json += "]}";
+  
+  server.send(200, "application/json", json);
+}
+
 // EEPROM functions
 void ddnsEEPROMinit() {
   EEPROM.begin(EEPROM_SIZE);
@@ -900,6 +938,7 @@ void setup() {
   server.on("/settings", pageSettings);
   server.on("/forcesync", handleForceSync);
   server.on("/forcentp", handleForceNtpSync);
+  server.on("/api/status", handleApiStatus);
   server.onNotFound(pageNotFound);
   server.begin();
 

@@ -132,6 +132,7 @@ That's it! The ESP32 is now fully configured.
 * `/settings` — Settings page (Basic Auth: `user` / `pass`)
 * `/forcesync` — Force DDNS update (302 redirect to `/`)
 * `/forcentp` — Force NTP sync (302 redirect to `/`)
+* `/api/status` — JSON API endpoint (no authentication)
 
 ---
 
