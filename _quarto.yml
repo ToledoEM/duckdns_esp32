@@ -1,12 +1,14 @@
 project:
   type: website
 
+site-url: "https://toledoem.github.io/espduckdns/"
+
 website:
   title: "ESP32 DuckDNS"
   navbar:
     left:
-      - text: "README"
-        href: readme.md
+      - text: "Repository"
+        href: "https://github.com/ToledoEM/duckdns_esp32"
 
 format:
   html:
@@ -14,5 +16,7 @@ format:
       light: flatly   # Bootswatch theme (Bootstrap look)
     toc: true
     toc-location: left
+    toc-depth: 4
+    toc-expand: 2
     css: styles.css
 

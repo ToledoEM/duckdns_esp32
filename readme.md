@@ -1,4 +1,6 @@
-# ESP32 DuckDNS Client (Enhanced) 🦆
+# ESP32 DuckDNS Client (Enhanced) <img src="https://toledoem.github.io/www/ducky_icon.png" alt="ducky icon" width="80" height="80" />
+
+
 
 This project is an open-source, standalone Dynamic DNS (DDNS) client for **DuckDNS.org** that runs on an **ESP32** microcontroller. This enhanced version is a complete overhaul, offering a robust, feature-rich, and secure solution to keep your DuckDNS domain pointed to your home's dynamic IP address.
 
@@ -65,6 +67,10 @@ GPIO 2 is used for status LEDs:
 * Safer string handling and bounded buffers
 * Simplified web UI and handlers; Basic Auth on Settings page
 * Hostname derived from device ID: `testduckNNN`
+* Fixed EEPROM overflow and corruption risk: firmware now computes required EEPROM capacity at startup, calls `EEPROM.begin()` with a safe size (capped), tracks `g_eepromCapacity`, and validates persistent-log write addresses to avoid out-of-bounds writes.
+* Fixed timestamp backfill bug: `updatePendingTimestamps()` now correctly marks corrected timestamps as valid (prevents repeated log churn and excessive EEPROM writes).
+* Centralized EEPROM commit state and log indexing: replaced per-function static commit flags with a shared commit state and `g_persistentLogCount`, improving commit batching reliability and preventing duplicate/unsynchronized commits.
+* Safer persistent logging fallback: if computed EEPROM requirements exceed a safe cap, persistent logging is disabled with a logged warning to avoid EEPROM corruption.
 
 
 ### 2. Software & Libraries
