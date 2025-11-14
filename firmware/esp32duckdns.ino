@@ -60,7 +60,7 @@ struct ddnsConfig {
   char initialized;
   int deviceid;
   char domain[32];          // Reduced from 65
-  char token[41];           // CRITICAL: For full DuckDNS token. DO NOT REDUCE!
+  char token[41];           // CRITICAL DO NOT REDUCE!
   int updateinterval;
   char ntpServer[32];       // Reduced from 65
   bool persistentLogging;
@@ -120,6 +120,12 @@ unsigned long time_sync_start = 0;
 // Memory management constants
 #define MIN_FREE_HEAP 8192  // Minimum free heap before taking action
 #define MEMORY_CHECK_INTERVAL 60000  // Check every minute
+
+// EEPROM runtime sizing and persistent-log state (centralized)
+size_t g_eepromCapacity = EEPROM_SIZE; // actual capacity used at begin()
+int g_persistentLogCount = -1;        // persisted log write counter
+bool g_pendingEEPROMCommit = false;   // pending commit state (shared)
+unsigned long g_lastEEPROMCommitTime = 0;
 
 // Reduced NTP server array
 const char* ntpServers[] = {PRIMARY_NTP_SERVER, SECONDARY_NTP_SERVER, TERTIARY_NTP_SERVER};
@@ -427,7 +433,8 @@ void updatePendingTimestamps() {
     if (!ddnsUpdateLog[i].timestampValid && ddnsUpdateLog[i].localTime > 0) {
       unsigned long timeDiff = currentLocalTime - ddnsUpdateLog[i].localTime;
       ddnsUpdateLog[i].timestamp = currentRealTime - (timeDiff / 1000);
-      ddnsUpdateLog[i].timestampValid = false;
+      // Mark timestamp as now valid after correction
+      ddnsUpdateLog[i].timestampValid = true;
       updatedCount++;
     }
   }
@@ -438,17 +445,14 @@ void updatePendingTimestamps() {
 }
 
 void saveToPersistentLog(const EnhancedLogEntry& entry) {
-  static int logCount = -1;
-  static unsigned long lastCommitTime = 0;
-  static bool pendingCommit = false;
-  
-  if (logCount == -1) {
-    EEPROM.get(EEPROM_LOG_OFFSET, logCount);
-    if (logCount < 0 || logCount >= PERSISTENT_LOG_SIZE) {
-      logCount = 0;
+  // Initialize persistent log counter if needed
+  if (g_persistentLogCount == -1) {
+    EEPROM.get(EEPROM_LOG_OFFSET, g_persistentLogCount);
+    if (g_persistentLogCount < 0 || g_persistentLogCount >= PERSISTENT_LOG_SIZE) {
+      g_persistentLogCount = 0;
     }
   }
-  
+
   PersistentLogEntry persistentEntry;
   persistentEntry.timestamp = entry.timestamp;
   persistentEntry.localTime = entry.localTime;
@@ -457,37 +461,47 @@ void saveToPersistentLog(const EnhancedLogEntry& entry) {
   persistentEntry.errorMessage[sizeof(persistentEntry.errorMessage) - 1] = '\0';
   persistentEntry.timestampValid = entry.timestampValid;
   persistentEntry.logType = entry.logType;
-  
-  int position = logCount % PERSISTENT_LOG_SIZE;
+
+  int position = g_persistentLogCount % PERSISTENT_LOG_SIZE;
   int address = EEPROM_LOG_OFFSET + sizeof(int) + (position * sizeof(PersistentLogEntry));
-  
+
+  // Bounds check to avoid writing past EEPROM capacity
+  if ((size_t)address + sizeof(PersistentLogEntry) > g_eepromCapacity) {
+    // Attempt wrap to start of log area
+    position = 0;
+    address = EEPROM_LOG_OFFSET + sizeof(int) + (position * sizeof(PersistentLogEntry));
+    if ((size_t)address + sizeof(PersistentLogEntry) > g_eepromCapacity) {
+      // Can't safely write persistent log; disable persistent logging and exit
+      enhancedLogAdd(0, 2, "EEPROM write out of bounds");
+      ddnsConfiguration.persistentLogging = false;
+      return;
+    }
+  }
+
   EEPROM.put(address, persistentEntry);
-  logCount++;
-  EEPROM.put(EEPROM_LOG_OFFSET, logCount);
-  
-  pendingCommit = true;
-  
+  g_persistentLogCount++;
+  EEPROM.put(EEPROM_LOG_OFFSET, g_persistentLogCount);
+
+  g_pendingEEPROMCommit = true;
+
   // Batch EEPROM commits to reduce wear - commit every 30 seconds or on critical events
   unsigned long now = millis();
   bool isCritical = (entry.status == 0 && entry.logType == 0); // DDNS failures
-  
-  if (isCritical || (now - lastCommitTime > 30000)) {
+
+  if (isCritical || (now - g_lastEEPROMCommitTime > 30000)) {
     EEPROM.commit();
-    pendingCommit = false;
-    lastCommitTime = now;
+    g_pendingEEPROMCommit = false;
+    g_lastEEPROMCommitTime = now;
   }
 }
 
 // Handle pending EEPROM commits to reduce wear
 void handlePendingEEPROMCommit() {
-  static bool pendingCommit = false;
-  static unsigned long lastCommitTime = 0;
-  
   // This will be called by saveToPersistentLog when needed
-  if (pendingCommit && (millis() - lastCommitTime > 30000)) {
+  if (g_pendingEEPROMCommit && (millis() - g_lastEEPROMCommitTime > 30000)) {
     EEPROM.commit();
-    pendingCommit = false;
-    lastCommitTime = millis();
+    g_pendingEEPROMCommit = false;
+    g_lastEEPROMCommitTime = millis();
   }
 }
 
@@ -720,9 +734,30 @@ void handleApiStatus() {
 
 // EEPROM functions
 void ddnsEEPROMinit() {
-  EEPROM.begin(EEPROM_SIZE);
+#if defined SERIAL_ENABLED
+  Serial.println("Initializing EEPROM (calculating required size)");
+#endif
+
+  // Calculate required EEPROM size for configuration + persistent log storage
+  size_t requiredSize = EEPROM_LOG_OFFSET + sizeof(int) + (PERSISTENT_LOG_SIZE * sizeof(PersistentLogEntry));
+  // Guard: some platforms limit EEPROM emulation size; cap to a reasonable maximum (4KB)
+  bool forceDisablePersistent = false;
+  if (requiredSize > 4096) {
+#if defined SERIAL_ENABLED
+    Serial.print("Required EEPROM size too large: ");
+    Serial.println(requiredSize);
+    Serial.println("Capping to 4096 bytes and disabling persistent logging to avoid overflow.");
+#endif
+    requiredSize = 4096;
+    // Request disabling persistent logging after reading existing config
+    forceDisablePersistent = true;
+  }
+
+  // Begin EEPROM with computed capacity
+  EEPROM.begin(requiredSize);
   delay(100);
-  
+  g_eepromCapacity = requiredSize;
+
   EEPROM.get(0, ddnsConfiguration);
   if (ddnsConfiguration.initialized != EEPROM_INITIALIZED_MARKER) {
 #if defined SERIAL_ENABLED
@@ -736,7 +771,17 @@ void ddnsEEPROMinit() {
     ddnsConfiguration.updateinterval = 10;
     strcpy(ddnsConfiguration.ntpServer, PRIMARY_NTP_SERVER);
     ddnsConfiguration.persistentLogging = false;
-    
+
+    EEPROM.put(0, ddnsConfiguration);
+    EEPROM.commit();
+  }
+
+  // If we had to force-disable persistent logging due to EEPROM cap, apply it now
+  if (forceDisablePersistent && ddnsConfiguration.persistentLogging) {
+#if defined SERIAL_ENABLED
+    Serial.println("Disabling persistent logging due to EEPROM size cap");
+#endif
+    ddnsConfiguration.persistentLogging = false;
     EEPROM.put(0, ddnsConfiguration);
     EEPROM.commit();
   }
