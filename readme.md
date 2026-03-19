@@ -6,7 +6,8 @@ This project is an open-source, standalone Dynamic DNS (DDNS) client for **DuckD
 
 
 **Version with NTP and persistent logging**
-![Web Interface Status Page](images/webclient_1_NTP.png)
+*Current Version stable stable with uptime of >month*
+![Web Interface Status Page](images/stableuptime.png)
 
 
 ## Configuration Stored in EEPROM

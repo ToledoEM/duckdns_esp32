@@ -13,10 +13,13 @@ website:
 format:
   html:
     theme:
-      light: flatly   # Bootswatch theme (Bootstrap look)
+      light: flatly # Bootswatch theme (Bootstrap look)
+    includes:
+      in_header: |
+        <script data-goatcounter="https://etoledo.goatcounter.com/count"
+          async src="//gc.zgo.at/count.js"></script>
     toc: true
     toc-location: left
     toc-depth: 4
     toc-expand: 2
     css: styles.css
-
