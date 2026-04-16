@@ -35,4 +35,13 @@ dist/
 .env.*
 
 /.quarto/
+/_site/
 **/*.quarto_ipynb
+
+# dev
+CLAUDE.md
+.claude/*
+CLAUDE*.md
+
+# secret
+secrets.yml

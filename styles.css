@@ -1,0 +1,79 @@
+/* ── Hero banner ─────────────────────────────────────────────── */
+.hero-banner {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  background: linear-gradient(135deg, #2c3e50 0%, #18bc9c 100%);
+  color: #fff;
+  border-radius: 0.75rem;
+  padding: 1.5rem 2rem;
+  margin-bottom: 2rem;
+  font-size: 1.1rem;
+  line-height: 1.5;
+}
+
+.hero-banner a {
+  color: #d4f5ec;
+  text-decoration: underline;
+}
+
+.hero-icon {
+  width: 72px;
+  height: 72px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.15);
+  padding: 6px;
+}
+
+/* ── Screenshots ─────────────────────────────────────────────── */
+.screenshot {
+  border: 1px solid #dee2e6;
+  border-radius: 0.5rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.10);
+  max-width: 100%;
+  margin: 0.75rem 0;
+}
+
+/* ── Table polish ────────────────────────────────────────────── */
+table {
+  font-size: 0.92rem;
+}
+
+/* ── Navbar logo sizing ──────────────────────────────────────── */
+.navbar-brand img {
+  height: 28px;
+  width: 28px;
+  border-radius: 50%;
+}
+
+/* ── Sidebar TOC ─────────────────────────────────────────────── */
+#quarto-sidebar {
+  font-size: 0.88rem;
+}
+
+/* ── Definition list (troubleshooting) ──────────────────────── */
+dl dt {
+  font-weight: 600;
+  color: #18bc9c;
+  margin-top: 0.75rem;
+}
+
+dl dd {
+  margin-left: 1rem;
+  margin-bottom: 0.25rem;
+}
+
+/* ── Grid cards ──────────────────────────────────────────────── */
+.grid .g-col-6 {
+  background: #f8f9fa;
+  border-left: 4px solid #18bc9c;
+  border-radius: 0.4rem;
+  padding: 1rem 1.25rem;
+}
+
+.grid .g-col-6 h3 {
+  font-size: 1rem;
+  margin-top: 0;
+  color: #2c3e50;
+}

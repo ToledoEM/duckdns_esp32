@@ -1,25 +1,44 @@
 project:
   type: website
+  output-dir: _site
+  render:
+    - readme.qmd
 
 site-url: "https://toledoem.github.io/espduckdns/"
 
 website:
   title: "ESP32 DuckDNS"
+  favicon: "https://toledoem.github.io/www/ducky_icon.png"
   navbar:
+    background: primary
+    logo: "https://toledoem.github.io/www/ducky_icon.png"
+    logo-alt: "DuckDNS duck icon"
+    title: "ESP32 DuckDNS"
     left:
-      - text: "Repository"
+      - text: "Docs"
+        href: readme.qmd
+    right:
+      - text: "Firmware"
+        href: "https://github.com/ToledoEM/duckdns_esp32/tree/main/firmware"
+      - icon: github
         href: "https://github.com/ToledoEM/duckdns_esp32"
+        aria-label: "GitHub repository"
+  page-footer:
+    left: "MIT License · [ToledoEM](https://github.com/ToledoEM)"
+    right: "Built with [Quarto](https://quarto.org)"
 
 format:
   html:
-    theme:
-      light: flatly # Bootswatch theme (Bootstrap look)
-    includes:
-      in_header: |
-        <script data-goatcounter="https://etoledo.goatcounter.com/count"
-          async src="//gc.zgo.at/count.js"></script>
+    theme: flatly
+    css: styles.css
     toc: true
     toc-location: left
-    toc-depth: 4
+    toc-depth: 3
     toc-expand: 2
-    css: styles.css
+    smooth-scroll: true
+    anchor-sections: true
+    code-copy: true
+    include-in-header:
+      text: |
+        <script data-goatcounter="https://etoledo.goatcounter.com/count"
+          async src="//gc.zgo.at/count.js"></script>
