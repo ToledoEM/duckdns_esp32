@@ -86,11 +86,9 @@ Click **Save Settings** — device reboots and starts updating.
 
 ## Web Interface
 
-![Status page showing uptime and last sync](images/stableuptime.png){.screenshot}
-
-::: {.panel-tabset}
-
 ### Status Page
+
+![Status page showing uptime and last sync](images/stableuptime.png){.screenshot}
 
 Shows current IP, last update time, next update countdown, NTP sync status, WiFi RSSI, and the in-memory log ring.
 
@@ -140,8 +138,6 @@ Basic Auth protected (`user` / `pass` by default — change `ADMIN_USERNAME` / `
   ]
 }
 ```
-
-:::
 
 ---
 
